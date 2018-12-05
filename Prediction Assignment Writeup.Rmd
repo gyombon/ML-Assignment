@@ -1,0 +1,163 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Guillaume Bonnissent"
+date: "4 December 2018"
+output:
+  html_document: default
+---
+
+## Executive Summary
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har.
+
+The goal of our project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. We will also use our prediction model to predict 20 different test cases.
+
+After some exploraty data analysis and data cleansing, we tested different model and concluded that the random forest method from the caret package with the default settings was the best model.
+
+
+## Exploratory Data Analysis and Data Selection
+
+```{r}
+# Load the training and test data, and look at their respective structure.
+trainingdata <- read.csv('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv', na.strings = '#DIV/0!', row.names = 1)
+testdata <- read.csv('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv', na.strings = '#DIV/0!', row.names = 1)
+str(trainingdata)
+str(testdata)
+```
+
+For the sake of clarity, we will explain the nomenclature used during our analysis for the different datasets:
+- trainingdata is the dataset that will be used to build the model
+- modeltraining is the dataset that will be used to train the model, and will be made of 60% randomly selected observations from trainingdata
+- modeltesting is the dataset that will be used to test the model, and will be made of 40% of randomly selected observations from trainingdata
+- testdata is the dataset that will be used to do a final test of the model, as per the assignment given to us.
+
+For our analysis, we want to use the data from accelerometers on the belt, forearm, arm, and dumbell. The first 6 columns are therefore irrelevant to our analysis, hence we delete them.
+
+```{r}
+trainingdata <- trainingdata[, 7:159]
+testdata <- testdata[, 7:159]
+```
+
+We can see that some factors have mainly NA values. For our analysis, we want to remove any factor where there is a NA value. For the integrity of the test data, we will remove the same columns on the training and test data.
+
+```{r}
+NAcolumns <- names(trainingdata[, colSums(is.na(trainingdata)) > 0])
+trainingdata <- trainingdata[, !(names(trainingdata) %in% NAcolumns)]
+testdata <- testdata[, !(names(testdata) %in% NAcolumns)]
+```
+
+We partition the data using the caret package, assigning 60% to modeltraining and 40% to modeltesting.
+
+```{r}
+library(caret)
+set.seed(1234)
+inTrain <- createDataPartition(trainingdata$classe, p = 0.6, list = FALSE)
+modeltraining <- trainingdata[inTrain, ]
+modeltesting <- trainingdata[-inTrain, ]
+```
+
+Again using the caret package, we identify the near zero variance predictors in modeltraining and delete them from all three datasets.
+
+```{r}
+nzv <- nearZeroVar(modeltraining, saveMetrics = TRUE)
+modeltraining <- modeltraining[, nzv$nzv == FALSE]
+modeltesting <- modeltesting[, nzv$nzv == FALSE]
+testdata <- testdata[, nzv$nzv == FALSE]
+```
+
+We now have a much reduced list of predictors, as shown below.
+
+```{r}
+dim(modeltraining)
+```
+
+## Model Building
+
+We decided to run three popular machine learning algorithms with different characteristics: Random Forest, Linear Discriminant Analysis and Gradient Boosting.
+
+```{r}
+library(randomForest)
+library(gbm)
+```
+```{r, cache=TRUE}
+set.seed(1234)
+modelrf <- train(classe ~ ., modeltraining, method = 'rf')
+modellda <- train(classe ~ ., modeltraining, method = 'lda')
+modelgbm <- train(classe ~ ., modeltraining, method = 'gbm', verbose = FALSE)
+```
+
+### Random Forest Model
+
+```{r}
+predictionrf <- predict(modelrf, modeltesting)
+confusionMatrix(predictionrf, modeltesting$classe)
+```
+
+This model has a out of sample error rate of 0.0018.
+
+### Linear Discriminant Analysis
+
+```{r}
+predictionlda <- predict(modellda, modeltesting)
+confusionMatrix(predictionlda, modeltesting$classe)
+```
+
+This model has a out of sample error rate of 0.298.
+
+## Gradient Boosting
+
+```{r}
+predictiongbm <- predict(modelgbm, modeltesting)
+confusionMatrix(predictiongbm, modeltesting$classe)
+```
+
+This model has a out of sample error rate of 0.0423.
+
+## Model Selection
+
+From the above confusion matrices, it appears that the Linear Discriminant Analysis is not as good a fit as the other two models. It also appears that the Random Forest model is a better fit than the Gradient Boosting one. We performed a resampling below to further compare the two models.
+
+```{r}
+resamps <- resamples(list(RF = modelrf, GBM = modelgbm))
+theme1 <- trellis.par.get()
+theme1$plot.symbol$col = rgb(.2, .2, .2, .4)
+theme1$plot.symbol$pch = 16
+theme1$plot.line$col = rgb(1, 0, 0, .7)
+theme1$plot.line$lwd <- 2
+trellis.par.set(theme1)
+bwplot(resamps, layout = c(2, 1))
+```
+
+The boxplot graph confirms that the Random Forest model is the best fit. We've added in the annexes some more details about that model.
+
+Furthermore, with such a low out of sample error rate (or high accuracy rate), we do not see the point in further tuning the model.
+
+## Predictions on testdata
+
+We can now run our model on testdata.
+
+```{r}
+predictiontest <- predict(modelrf, testdata)
+predictiontest
+```
+
+## Appendix 1
+
+```{r}
+modelrf$finalModel
+```
+
+## Appendix 2
+
+```{r}
+# The graph shows the top 25 most important predictors.
+varImpPlot(modelrf$finalModel, n.var = 25)
+```
+
+## Appendix 3
+
+```{r}
+plot(modelrf$finalModel)
+```
